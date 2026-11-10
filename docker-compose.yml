@@ -1,0 +1,50 @@
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+asyncpg://poizon:poizon@db/poizon
+    REDIS_URL: redis://redis:6379/0
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: poizon, POSTGRES_PASSWORD: poizon, POSTGRES_DB: poizon}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poizon"]
+      interval: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes: [redisdata:/data]
+    restart: unless-stopped
+
+  # миграции Alembic перед стартом api и bot
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    <<: *app
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  bot:
+    <<: *app
+    command: ["python", "-m", "app.bot"]
+    # без BOT_TOKEN бот завершается с кодом 0 и не перезапускается
+    restart: on-failure
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+
+volumes:
+  pgdata:
+  redisdata:
